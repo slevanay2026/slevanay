@@ -1,0 +1,6 @@
+{
+  "name": "NovaTV",
+  "description": "Smart TV ve TV Box icin Xtream IPTV panel entegrasyonlu, kategori ve icerik yonetimli modern medya oynatici.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
