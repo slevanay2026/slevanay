@@ -17,6 +17,7 @@ import com.example.data.remote.XtreamClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 class XtreamRepository(
     private val dao: XtreamDao,
@@ -36,6 +37,9 @@ class XtreamRepository(
     fun observeVisibleChannels(profileId: Long): Flow<List<ChannelEntity>> =
         dao.observeVisibleChannels(profileId)
 
+    fun observeAllChannels(profileId: Long): Flow<List<ChannelEntity>> =
+        dao.observeAllChannels(profileId)
+
     fun observeVisibleVods(profileId: Long): Flow<List<VodEntity>> =
         dao.observeVisibleVods(profileId)
 
@@ -44,6 +48,9 @@ class XtreamRepository(
 
     fun observeWatchHistory(profileId: Long): Flow<List<WatchHistoryEntity>> =
         dao.observeWatchHistory(profileId)
+
+    fun observeRecentlyWatchedChannels(profileId: Long): Flow<List<WatchHistoryEntity>> =
+        dao.observeRecentlyWatchedChannels(profileId)
 
     suspend fun connectAndSyncProfile(
         existingProfileId: Long? = null,
@@ -91,6 +98,34 @@ class XtreamRepository(
         return dao.getProfileById(savedId) ?: savedProfile
     }
 
+    suspend fun loginViaPrivatePortal(
+        portalUrl: String,
+        username: String,
+        password: String
+    ): XtreamProfileEntity {
+        val resolved = client.resolvePrivateLoginUrl(
+            portalUrl = portalUrl,
+            username = username,
+            password = password
+        )
+        val existingMatch = dao.getAllProfilesOnce().firstOrNull {
+            it.serverUrl.equals(resolved.xtreamServerUrl, ignoreCase = true) &&
+                it.username.equals(resolved.xtreamUsername, ignoreCase = true)
+        }
+        val profileName = resolved.profileName.ifBlank { username.trim() }
+        return connectAndSyncProfile(
+            existingProfileId = existingMatch?.id,
+            name = profileName,
+            serverUrl = resolved.xtreamServerUrl,
+            username = resolved.xtreamUsername,
+            password = resolved.xtreamPassword
+        )
+    }
+
+    suspend fun verifyPortalReachable(portalUrl: String) {
+        client.verifyPortalReachable(portalUrl)
+    }
+
     suspend fun switchActiveProfile(profileId: Long) {
         dao.setActiveProfile(profileId)
     }
@@ -109,37 +144,85 @@ class XtreamRepository(
         }
     }
 
+    suspend fun getProfileCount(): Int = dao.getProfileCount()
+
+    suspend fun getChannelCount(profileId: Long): Int = dao.getChannelCount(profileId)
+
+    suspend fun findPresetProfile(serverUrl: String): XtreamProfileEntity? {
+        val normalized = XtreamLinkParser.normalizeServerUrl(serverUrl)
+        return dao.getAllProfilesOnce().firstOrNull {
+            it.serverUrl.equals(normalized, ignoreCase = true)
+        }
+    }
+
+    suspend fun saveOfflinePresetProfile(
+        name: String,
+        serverUrl: String,
+        username: String,
+        password: String
+    ): XtreamProfileEntity {
+        val normalizedUrl = XtreamLinkParser.normalizeServerUrl(serverUrl)
+        val profile = XtreamProfileEntity(
+            name = name.trim(),
+            serverUrl = normalizedUrl,
+            username = username.trim(),
+            password = password.trim(),
+            isActive = true,
+            status = "Senkronizasyon Bekliyor",
+            liveFormat = "m3u8"
+        )
+        val savedId = dao.insertProfile(profile)
+        dao.setActiveProfile(savedId)
+        return dao.getProfileById(savedId) ?: profile.copy(id = savedId)
+    }
+
     suspend fun syncCatalog(profile: XtreamProfileEntity): XtreamProfileEntity = coroutineScope {
         val authDeferred = async {
             runCatching { client.authenticate(profile.serverUrl, profile.username, profile.password) }
-                .getOrNull()
         }
         val liveCatDeferred = async {
-            client.getLiveCategories(profile.serverUrl, profile.username, profile.password)
+            runCatching { client.getLiveCategories(profile.serverUrl, profile.username, profile.password) }
         }
         val liveStreamsDeferred = async {
-            client.getLiveStreams(profile.serverUrl, profile.username, profile.password)
+            runCatching { client.getLiveStreams(profile.serverUrl, profile.username, profile.password) }
         }
         val vodCatDeferred = async {
-            client.getVodCategories(profile.serverUrl, profile.username, profile.password)
+            runCatching { client.getVodCategories(profile.serverUrl, profile.username, profile.password) }
         }
         val vodStreamsDeferred = async {
-            client.getVodStreams(profile.serverUrl, profile.username, profile.password)
+            runCatching { client.getVodStreams(profile.serverUrl, profile.username, profile.password) }
         }
         val seriesCatDeferred = async {
-            client.getSeriesCategories(profile.serverUrl, profile.username, profile.password)
+            runCatching { client.getSeriesCategories(profile.serverUrl, profile.username, profile.password) }
         }
         val seriesListDeferred = async {
-            client.getSeries(profile.serverUrl, profile.username, profile.password)
+            runCatching { client.getSeries(profile.serverUrl, profile.username, profile.password) }
         }
 
-        val auth = authDeferred.await()
-        val liveCats = liveCatDeferred.await()
-        val liveStreams = liveStreamsDeferred.await()
-        val vodCats = vodCatDeferred.await()
-        val vodStreams = vodStreamsDeferred.await()
-        val seriesCats = seriesCatDeferred.await()
-        val seriesList = seriesListDeferred.await()
+        val authResult = authDeferred.await()
+        val liveCatsResult = liveCatDeferred.await()
+        val liveStreamsResult = liveStreamsDeferred.await()
+        val vodCatsResult = vodCatDeferred.await()
+        val vodStreamsResult = vodStreamsDeferred.await()
+        val seriesCatsResult = seriesCatDeferred.await()
+        val seriesListResult = seriesListDeferred.await()
+
+        val firstError = liveStreamsResult.exceptionOrNull()
+            ?: liveCatsResult.exceptionOrNull()
+            ?: authResult.exceptionOrNull()
+            ?: vodStreamsResult.exceptionOrNull()
+
+        if (liveStreamsResult.isFailure && vodStreamsResult.isFailure && seriesListResult.isFailure && firstError != null) {
+            throw firstError
+        }
+
+        val auth = authResult.getOrNull()
+        val liveCats = liveCatsResult.getOrDefault(emptyList())
+        val liveStreams = liveStreamsResult.getOrDefault(emptyList())
+        val vodCats = vodCatsResult.getOrDefault(emptyList())
+        val vodStreams = vodStreamsResult.getOrDefault(emptyList())
+        val seriesCats = seriesCatsResult.getOrDefault(emptyList())
+        val seriesList = seriesListResult.getOrDefault(emptyList())
 
         val pid = profile.id
 
@@ -252,15 +335,22 @@ class XtreamRepository(
             )
         }
 
-        dao.deleteCategoriesForProfile(pid)
-        dao.deleteChannelsForProfile(pid)
-        dao.deleteVodsForProfile(pid)
-        dao.deleteSeriesForProfile(pid)
-
-        if (mappedCategories.isNotEmpty()) dao.insertCategories(mappedCategories)
-        mappedChannels.chunked(500).forEach { dao.insertChannels(it) }
-        mappedVods.chunked(500).forEach { dao.insertVods(it) }
-        mappedSeries.chunked(500).forEach { dao.insertSeries(it) }
+        if (liveCatsResult.isSuccess || vodCatsResult.isSuccess || seriesCatsResult.isSuccess) {
+            dao.deleteCategoriesForProfile(pid)
+            if (mappedCategories.isNotEmpty()) dao.insertCategories(mappedCategories)
+        }
+        if (liveStreamsResult.isSuccess) {
+            dao.deleteChannelsForProfile(pid)
+            mappedChannels.chunked(500).forEach { dao.insertChannels(it) }
+        }
+        if (vodStreamsResult.isSuccess) {
+            dao.deleteVodsForProfile(pid)
+            mappedVods.chunked(500).forEach { dao.insertVods(it) }
+        }
+        if (seriesListResult.isSuccess) {
+            dao.deleteSeriesForProfile(pid)
+            mappedSeries.chunked(500).forEach { dao.insertSeries(it) }
+        }
 
         val updatedProfile = profile.copy(
             status = auth?.status ?: profile.status,
@@ -299,6 +389,10 @@ class XtreamRepository(
         dao.setChannelHidden(channel.id, !channel.isHidden)
     }
 
+    suspend fun unhideAllChannels(profileId: Long) {
+        dao.setAllChannelsHidden(profileId, false)
+    }
+
     suspend fun toggleVodFavorite(vod: VodEntity) {
         dao.setVodFavorite(vod.id, !vod.isFavorite)
     }
@@ -320,9 +414,30 @@ class XtreamRepository(
     suspend fun fetchSeriesInfo(profile: XtreamProfileEntity, seriesId: Int): XtreamSeriesDetail? =
         client.getSeriesInfo(profile.serverUrl, profile.username, profile.password, seriesId)
 
+    suspend fun getSavedWatchPosition(
+        profileId: Long,
+        contentType: ContentType,
+        streamId: Int
+    ): Long {
+        val id = "${profileId}_${contentType.dbValue}_${streamId}"
+        return dao.getWatchHistoryItem(id)?.positionMs ?: 0L
+    }
+
     suspend fun saveWatchProgress(request: PlaybackRequest, positionMs: Long, durationMs: Long) {
+        val entryId = "${request.profileId}_${request.contentType.dbValue}_${request.streamId}"
+        val existing = dao.getWatchHistoryItem(entryId)
+        val effectivePos = if (positionMs <= 0L && existing != null && request.contentType != ContentType.LIVE) {
+            existing.positionMs
+        } else {
+            positionMs.coerceAtLeast(0L)
+        }
+        val effectiveDur = if (durationMs <= 0L && existing != null) {
+            existing.durationMs
+        } else {
+            durationMs.coerceAtLeast(0L)
+        }
         val entry = WatchHistoryEntity(
-            id = "${request.profileId}_${request.contentType.dbValue}_${request.streamId}",
+            id = entryId,
             profileId = request.profileId,
             contentType = request.contentType.dbValue,
             streamId = request.streamId,
@@ -331,11 +446,15 @@ class XtreamRepository(
             imageUrl = request.imageUrl,
             streamUrl = request.streamUrl,
             containerExtension = request.containerExtension,
-            positionMs = positionMs,
-            durationMs = durationMs,
+            positionMs = effectivePos,
+            durationMs = effectiveDur,
             updatedAt = System.currentTimeMillis()
         )
         dao.upsertWatchHistory(entry)
+    }
+
+    suspend fun removeWatchHistoryItem(id: String) {
+        dao.deleteWatchHistoryItem(id)
     }
 
     suspend fun clearWatchHistory(profileId: Long) {

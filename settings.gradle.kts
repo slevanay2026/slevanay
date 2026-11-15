@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "NovaTV"
+rootProject.name = "JHE HAKAR"
 
 include(":app")

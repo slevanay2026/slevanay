@@ -134,14 +134,23 @@ data class PlaybackRequest(
     val liveChannelIndex: Int = -1
 )
 
+object DefaultXtreamPreset {
+    const val NAME = "SANAZ"
+    const val SERVER_URL = "http://188.72.5.30:8080"
+    const val USERNAME = "alsard"
+    const val PASSWORD = "555666"
+}
+
 object XtreamLinkParser {
     fun normalizeServerUrl(rawUrl: String): String {
         var trimmed = rawUrl.trim()
         if (trimmed.isEmpty()) return ""
-        if (!trimmed.startsWith("http://", ignoreCase = true) &&
-            !trimmed.startsWith("https://", ignoreCase = true)
-        ) {
-            trimmed = "http://$trimmed"
+        trimmed = when {
+            trimmed.startsWith("https://", ignoreCase = true) ->
+                "https://" + trimmed.substring(8)
+            trimmed.startsWith("http://", ignoreCase = true) ->
+                "http://" + trimmed.substring(7)
+            else -> "http://$trimmed"
         }
         return trimmed.trimEnd('/')
     }

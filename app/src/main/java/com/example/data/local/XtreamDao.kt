@@ -23,6 +23,12 @@ interface XtreamDao {
     @Query("SELECT * FROM xtream_profiles WHERE id = :id LIMIT 1")
     suspend fun getProfileById(id: Long): XtreamProfileEntity?
 
+    @Query("SELECT * FROM xtream_profiles ORDER BY isActive DESC, id DESC")
+    suspend fun getAllProfilesOnce(): List<XtreamProfileEntity>
+
+    @Query("SELECT COUNT(*) FROM xtream_profiles")
+    suspend fun getProfileCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertProfile(profile: XtreamProfileEntity): Long
 
@@ -81,8 +87,14 @@ interface XtreamDao {
     )
     fun observeVisibleChannels(profileId: Long): Flow<List<ChannelEntity>>
 
+    @Query("SELECT * FROM channels WHERE profileId = :profileId ORDER BY num ASC, name ASC")
+    fun observeAllChannels(profileId: Long): Flow<List<ChannelEntity>>
+
     @Query("SELECT * FROM channels WHERE profileId = :profileId")
     suspend fun getChannelsOnce(profileId: Long): List<ChannelEntity>
+
+    @Query("SELECT COUNT(*) FROM channels WHERE profileId = :profileId")
+    suspend fun getChannelCount(profileId: Long): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChannels(channels: List<ChannelEntity>)
@@ -92,6 +104,9 @@ interface XtreamDao {
 
     @Query("UPDATE channels SET isHidden = :isHidden WHERE id = :id")
     suspend fun setChannelHidden(id: String, isHidden: Boolean)
+
+    @Query("UPDATE channels SET isHidden = :isHidden WHERE profileId = :profileId")
+    suspend fun setAllChannelsHidden(profileId: Long, isHidden: Boolean)
 
     @Query("DELETE FROM channels WHERE profileId = :profileId")
     suspend fun deleteChannelsForProfile(profileId: Long)
@@ -142,8 +157,21 @@ interface XtreamDao {
     @Query("SELECT * FROM watch_history WHERE profileId = :profileId ORDER BY updatedAt DESC LIMIT 20")
     fun observeWatchHistory(profileId: Long): Flow<List<WatchHistoryEntity>>
 
+    @Query(
+        "SELECT * FROM watch_history " +
+            "WHERE profileId = :profileId AND contentType = 'LIVE' " +
+            "ORDER BY updatedAt DESC LIMIT 25"
+    )
+    fun observeRecentlyWatchedChannels(profileId: Long): Flow<List<WatchHistoryEntity>>
+
+    @Query("SELECT * FROM watch_history WHERE id = :id LIMIT 1")
+    suspend fun getWatchHistoryItem(id: String): WatchHistoryEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertWatchHistory(entry: WatchHistoryEntity)
+
+    @Query("DELETE FROM watch_history WHERE id = :id")
+    suspend fun deleteWatchHistoryItem(id: String)
 
     @Query("DELETE FROM watch_history WHERE profileId = :profileId")
     suspend fun clearWatchHistory(profileId: Long)

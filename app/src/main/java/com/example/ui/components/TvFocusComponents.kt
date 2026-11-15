@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
 import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.BroadcastCoral
 import com.example.ui.theme.DeepObsidian
@@ -238,6 +240,7 @@ fun TvChannelCard(
     isFavorite: Boolean,
     onPlay: () -> Unit,
     onToggleFavorite: () -> Unit,
+    onToggleHidden: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     TvFocusableCard(
@@ -301,7 +304,7 @@ fun TvChannelCard(
                         color = BroadcastCoral.copy(alpha = 0.18f)
                     ) {
                         Text(
-                            text = "CANLI",
+                            text = LocalAppStrings.current.liveBadge,
                             style = MaterialTheme.typography.labelSmall,
                             color = BroadcastCoral,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -329,6 +332,21 @@ fun TvChannelCard(
                     contentDescription = if (isFavorite) "Favorilerden çıkar" else "Favorilere ekle",
                     tint = if (isFavorite) AmberGold else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+
+            if (onToggleHidden != null) {
+                IconButton(
+                    onClick = onToggleHidden,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("hide_channel_$channelNumber")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VisibilityOff,
+                        contentDescription = LocalAppStrings.current.parentalHideChannelAction,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             if (isFocused) {

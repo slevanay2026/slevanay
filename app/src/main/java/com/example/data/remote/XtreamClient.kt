@@ -25,9 +25,9 @@ class XtreamApiException(message: String, cause: Throwable? = null) : Exception(
 
 class XtreamClient {
     val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(45, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(25, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -65,6 +65,171 @@ class XtreamClient {
             timezone = timezone,
             message = userInfo.optString("message", "")
         )
+    }
+
+    data class PrivatePortalResolution(
+        val xtreamServerUrl: String,
+        val xtreamUsername: String,
+        val xtreamPassword: String,
+        val profileName: String
+    )
+
+    /**
+     * Authenticates a login request against either:
+     * 1) A direct Xtream portal base URL (e.g., http://host:8080), or
+     * 2) A private JSON / Auth URL (e.g., https://private.example/auth.json or /api/login)
+     *    that validates the user or returns the hidden Xtream server credentials.
+     */
+    suspend fun resolvePrivateLoginUrl(
+        portalUrl: String,
+        username: String,
+        password: String
+    ): PrivatePortalResolution = withContext(Dispatchers.IO) {
+        val normalized = XtreamLinkParser.normalizeServerUrl(portalUrl)
+        val parsedHttp = normalized.toHttpUrlOrNull()
+            ?: throw XtreamApiException("Geçersiz özel portal adresi.")
+
+        val pathLower = parsedHttp.encodedPath.lowercase()
+        val isCustomEndpoint = pathLower.endsWith(".json") ||
+            pathLower.contains("login") ||
+            pathLower.contains("auth") ||
+            (parsedHttp.pathSegments.any { it.isNotBlank() } && !pathLower.contains("player_api.php"))
+
+        if (!isCustomEndpoint) {
+            authenticate(normalized, username, password)
+            return@withContext PrivatePortalResolution(
+                xtreamServerUrl = normalized,
+                xtreamUsername = username.trim(),
+                xtreamPassword = password.trim(),
+                profileName = username.trim()
+            )
+        }
+
+        val urlWithParams = parsedHttp.newBuilder()
+            .addQueryParameter("username", username.trim())
+            .addQueryParameter("password", password.trim())
+            .build()
+
+        val getRequest = Request.Builder()
+            .url(urlWithParams)
+            .header("User-Agent", "NovaTV/1.0 (Android TV)")
+            .get()
+            .build()
+
+        val body = try {
+            okHttpClient.newCall(getRequest).execute().use { response ->
+                val raw = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw XtreamApiException("Özel giriş sunucusu hatası (HTTP ${response.code}).")
+                }
+                raw
+            }
+        } catch (e: IOException) {
+            throw XtreamApiException("Özel giriş URL'sine bağlanılamadı.", e)
+        }
+
+        val json = runCatching { JSONObject(body) }.getOrNull()
+            ?: throw XtreamApiException("Özel giriş URL'sinden geçerli JSON yanıtı alınamadı.")
+
+        // Case A: Direct Xtream user_info response
+        if (json.has("user_info")) {
+            val baseServer = normalized.substringBefore("/player_api.php")
+            authenticate(baseServer, username, password)
+            return@withContext PrivatePortalResolution(
+                xtreamServerUrl = baseServer,
+                xtreamUsername = username.trim(),
+                xtreamPassword = password.trim(),
+                profileName = username.trim()
+            )
+        }
+
+        // Case B: Explicit failure flag
+        if ((json.has("ok") && !json.optBoolean("ok", true)) ||
+            (json.has("authorized") && !json.optBoolean("authorized", true)) ||
+            json.optString("status", "").equals("error", ignoreCase = true) ||
+            json.optString("status", "").equals("denied", ignoreCase = true)
+        ) {
+            val errMsg = json.optString("message", json.optString("error", "Giriş reddedildi."))
+            throw XtreamApiException(errMsg.ifBlank { "Giriş reddedildi." })
+        }
+
+        // Case C: JSON contains a users list for private auth lookup
+        val usersArray = json.optJSONArray("users")
+        if (usersArray != null) {
+            var matchedObj: JSONObject? = null
+            for (i in 0 until usersArray.length()) {
+                val uObj = usersArray.optJSONObject(i) ?: continue
+                val uName = uObj.optString("username", "")
+                val uPass = uObj.optString("password", "")
+                if (uName == username.trim() && uPass == password.trim()) {
+                    matchedObj = uObj
+                    break
+                }
+            }
+            if (matchedObj == null) {
+                throw XtreamApiException("Kullanıcı adı veya şifre özel listede bulunamadı.")
+            }
+            val targetServer = matchedObj.optString(
+                "serverUrl",
+                matchedObj.optString("server_url", matchedObj.optString("url", json.optString("serverUrl", json.optString("url", ""))))
+            )
+            if (targetServer.isBlank()) {
+                throw XtreamApiException("Özel JSON yanıtında Xtream sunucu adresi eksik.")
+            }
+            val xtUser = matchedObj.optString("xtreamUsername", username.trim()).ifBlank { username.trim() }
+            val xtPass = matchedObj.optString("xtreamPassword", password.trim()).ifBlank { password.trim() }
+            val label = matchedObj.optString("name", username.trim()).ifBlank { username.trim() }
+            val cleanTarget = XtreamLinkParser.normalizeServerUrl(targetServer)
+            authenticate(cleanTarget, xtUser, xtPass)
+            return@withContext PrivatePortalResolution(
+                xtreamServerUrl = cleanTarget,
+                xtreamUsername = xtUser,
+                xtreamPassword = xtPass,
+                profileName = label
+            )
+        }
+
+        // Case D: Single portal redirect JSON { serverUrl / url, optional username/password/name }
+        val resolvedServer = json.optString(
+            "serverUrl",
+            json.optString("server_url", json.optString("url", json.optString("host", "")))
+        )
+        if (resolvedServer.isBlank()) {
+            throw XtreamApiException("Özel URL yanıtında sunucu adresi bulunamadı.")
+        }
+        val cleanTarget = XtreamLinkParser.normalizeServerUrl(resolvedServer)
+        val xtUser = json.optString("xtreamUsername", json.optString("username", username.trim()))
+            .ifBlank { username.trim() }
+        val xtPass = json.optString("xtreamPassword", json.optString("password", password.trim()))
+            .ifBlank { password.trim() }
+        val label = json.optString("name", username.trim()).ifBlank { username.trim() }
+        authenticate(cleanTarget, xtUser, xtPass)
+        PrivatePortalResolution(
+            xtreamServerUrl = cleanTarget,
+            xtreamUsername = xtUser,
+            xtreamPassword = xtPass,
+            profileName = label
+        )
+    }
+
+    suspend fun verifyPortalReachable(portalUrl: String) = withContext(Dispatchers.IO) {
+        val normalized = XtreamLinkParser.normalizeServerUrl(portalUrl)
+        val url = normalized.toHttpUrlOrNull()
+            ?: throw XtreamApiException("Geçersiz portal URL formatı.")
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", "NovaTV/1.0 (Android TV)")
+            .get()
+            .build()
+        try {
+            okHttpClient.newCall(req).execute().use { response ->
+                if (response.code >= 500) {
+                    throw XtreamApiException("Sunucu yanıt vermiyor (HTTP ${response.code}).")
+                }
+            }
+        } catch (e: IOException) {
+            throw XtreamApiException("Portal URL erişilemiyor: ${e.message ?: "Bağlantı hatası"}", e)
+        }
     }
 
     suspend fun getLiveCategories(
@@ -105,6 +270,31 @@ class XtreamClient {
         }
     }
 
+    private fun JSONObject.optFlexibleInt(key: String, fallback: Int): Int {
+        val raw = optString(key, "").trim()
+        if (raw.isNotEmpty()) {
+            raw.toIntOrNull()?.let { return it }
+        }
+        return optInt(key, fallback)
+    }
+
+    private fun JSONObject.optCleanString(key: String, fallback: String = ""): String {
+        if (!has(key) || isNull(key)) return fallback
+        val value = optString(key, fallback).trim()
+        return if (value.equals("null", ignoreCase = true) || value.isEmpty()) fallback else value
+    }
+
+    private fun JSONObject.optCategoryId(): String {
+        val direct = optCleanString("category_id", "")
+        if (direct.isNotEmpty()) return direct
+        val catIds = optJSONArray("category_ids")
+        if (catIds != null && catIds.length() > 0) {
+            val first = catIds.optString(0, "").trim()
+            if (first.isNotEmpty() && !first.equals("null", ignoreCase = true)) return first
+        }
+        return "0"
+    }
+
     suspend fun getLiveStreams(
         serverUrl: String,
         username: String,
@@ -115,16 +305,16 @@ class XtreamClient {
         buildList(array.length()) {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
-                val streamId = obj.optInt("stream_id", -1)
+                val streamId = obj.optFlexibleInt("stream_id", -1)
                 if (streamId <= 0) continue
                 add(
                     XtreamLiveStreamDto(
                         streamId = streamId,
-                        num = obj.optInt("num", i + 1),
-                        name = obj.optString("name", "Kanal $streamId").trim(),
-                        streamIcon = obj.optString("stream_icon", "").trim(),
-                        epgChannelId = obj.optString("epg_channel_id", "").trim(),
-                        categoryId = obj.optString("category_id", "0").trim()
+                        num = obj.optFlexibleInt("num", i + 1),
+                        name = obj.optCleanString("name", "Kanal $streamId"),
+                        streamIcon = obj.optCleanString("stream_icon", ""),
+                        epgChannelId = obj.optCleanString("epg_channel_id", ""),
+                        categoryId = obj.optCategoryId()
                     )
                 )
             }
@@ -141,18 +331,17 @@ class XtreamClient {
         buildList(array.length()) {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
-                val streamId = obj.optInt("stream_id", -1)
+                val streamId = obj.optFlexibleInt("stream_id", -1)
                 if (streamId <= 0) continue
                 add(
                     XtreamVodStreamDto(
                         streamId = streamId,
-                        name = obj.optString("name", "Film $streamId").trim(),
-                        streamIcon = obj.optString("stream_icon", "").trim(),
-                        categoryId = obj.optString("category_id", "0").trim(),
-                        containerExtension = obj.optString("container_extension", "mp4")
-                            .ifBlank { "mp4" },
-                        rating = obj.optString("rating", "").trim(),
-                        added = obj.optString("added", "0").toLongOrNull() ?: 0L
+                        name = obj.optCleanString("name", "Film $streamId"),
+                        streamIcon = obj.optCleanString("stream_icon", ""),
+                        categoryId = obj.optCategoryId(),
+                        containerExtension = obj.optCleanString("container_extension", "mp4"),
+                        rating = obj.optCleanString("rating", ""),
+                        added = obj.optCleanString("added", "0").toLongOrNull() ?: 0L
                     )
                 )
             }
@@ -181,7 +370,7 @@ class XtreamClient {
         } else ""
 
         XtreamVodInfo(
-            streamId = movieData.optInt("stream_id", vodId),
+            streamId = movieData.optFlexibleInt("stream_id", vodId),
             name = movieData.optString("name", info.optString("name", "")).trim(),
             posterUrl = info.optString("movie_image", info.optString("cover_big", "")).trim(),
             backdropUrl = firstBackdrop.trim(),
@@ -206,7 +395,7 @@ class XtreamClient {
         buildList(array.length()) {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
-                val seriesId = obj.optInt("series_id", -1)
+                val seriesId = obj.optFlexibleInt("series_id", -1)
                 if (seriesId <= 0) continue
                 add(
                     XtreamSeriesDto(
@@ -365,7 +554,7 @@ class XtreamClient {
 
         val request = Request.Builder()
             .url(urlBuilder.build())
-            .header("User-Agent", "NovaTV/1.0 (Android TV)")
+            .header("User-Agent", "IPTVSmartersPlayer")
             .get()
             .build()
 

@@ -6,9 +6,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,11 +30,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Sort
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarOutline
 import androidx.compose.material3.Button
@@ -73,6 +76,8 @@ import com.example.data.model.XtreamVodInfo
 import com.example.ui.components.TvCategoryRowItem
 import com.example.ui.components.TvEmptyStateCard
 import com.example.ui.components.TvPosterCard
+import com.example.ui.i18n.AppStrings
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.DeepObsidian
 import com.example.ui.theme.ElectricCyan
@@ -104,6 +109,8 @@ fun MoviesScreen(
     onOpenManager: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
+
     if (!hasActiveProfile) {
         Column(
             modifier = modifier
@@ -112,10 +119,10 @@ fun MoviesScreen(
             verticalArrangement = Arrangement.Center
         ) {
             TvEmptyStateCard(
-                title = "Film Arşivi İçin Panel Gerekli",
-                description = "VOD filmlerinizi kategorilere göre düzenleyip izlemek için Yönetim sekmesinden Xtream panelinizi bağlayın.",
+                title = strings.moviesPanelRequiredTitle,
+                description = strings.moviesPanelRequiredDesc,
                 icon = Icons.Rounded.Movie,
-                actionLabel = "Panel Ekle",
+                actionLabel = strings.addPanelBtn,
                 onAction = onOpenManager
             )
         }
@@ -144,7 +151,7 @@ fun MoviesScreen(
                             .padding(14.dp)
                     ) {
                         Text(
-                            text = "Film Kategorileri",
+                            text = strings.movieCategoriesTitle,
                             style = MaterialTheme.typography.titleLarge
                         )
                         Spacer(modifier = Modifier.height(10.dp))
@@ -154,7 +161,7 @@ fun MoviesScreen(
                         ) {
                             item {
                                 TvCategoryRowItem(
-                                    name = "Tüm Filmler",
+                                    name = strings.allMoviesTitle,
                                     count = allVods.size,
                                     isSelected = selectedCategoryId == null,
                                     onClick = { onSelectCategory(null) }
@@ -213,7 +220,7 @@ fun MoviesScreen(
                         FilterChip(
                             selected = selectedCategoryId == null,
                             onClick = { onSelectCategory(null) },
-                            label = { Text("Tümü (${allVods.size})") }
+                            label = { Text("${strings.allMoviesTitle} (${allVods.size})") }
                         )
                     }
                     items(categories, key = { it.id }) { cat ->
@@ -245,6 +252,14 @@ fun MoviesScreen(
     }
 }
 
+private fun sortLabel(option: VodSortOption, strings: AppStrings): String = when (option) {
+    VodSortOption.DEFAULT -> strings.sortDefault
+    VodSortOption.NAME_ASC -> strings.sortNameAsc
+    VodSortOption.RATING_DESC -> strings.sortRatingDesc
+    VodSortOption.RECENT_DESC -> strings.sortRecentDesc
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MoviesFilterHeader(
     searchQuery: String,
@@ -255,22 +270,19 @@ private fun MoviesFilterHeader(
     onSortChange: (VodSortOption) -> Unit,
     onToggleFavoritesOnly: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
     var sortMenuExpanded by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    val searchField: @Composable (Modifier) -> Unit = { fieldModifier ->
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Film ara...") },
+            placeholder = { Text(strings.searchMovieHint, maxLines = 1) },
             leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Temizle")
+                        Icon(Icons.Rounded.Close, contentDescription = strings.closeBtn)
                     }
                 }
             },
@@ -282,20 +294,22 @@ private fun MoviesFilterHeader(
                 focusedBorderColor = ElectricCyan,
                 unfocusedBorderColor = GlassBorder
             ),
-            modifier = Modifier
-                .weight(1f)
-                .testTag("movies_search_input")
+            modifier = fieldModifier.testTag("movies_search_input")
         )
+    }
 
+    val sortBox: @Composable () -> Unit = {
         Box {
             OutlinedButton(
                 onClick = { sortMenuExpanded = true },
                 border = BorderStroke(1.dp, GlassBorder),
-                modifier = Modifier.testTag("movies_sort_button")
+                modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
+                    .testTag("movies_sort_button")
             ) {
-                Icon(Icons.Rounded.Sort, contentDescription = null, tint = ElectricCyan)
+                Icon(Icons.AutoMirrored.Rounded.Sort, contentDescription = null, tint = ElectricCyan)
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(sortOption.label, maxLines = 1)
+                Text(sortLabel(sortOption, strings), maxLines = 1)
             }
             DropdownMenu(
                 expanded = sortMenuExpanded,
@@ -303,7 +317,7 @@ private fun MoviesFilterHeader(
             ) {
                 VodSortOption.entries.forEach { option ->
                     DropdownMenuItem(
-                        text = { Text(option.label) },
+                        text = { Text(sortLabel(option, strings)) },
                         onClick = {
                             onSortChange(option)
                             sortMenuExpanded = false
@@ -312,11 +326,13 @@ private fun MoviesFilterHeader(
                 }
             }
         }
+    }
 
+    val favChip: @Composable () -> Unit = {
         FilterChip(
             selected = favoritesOnly,
             onClick = onToggleFavoritesOnly,
-            label = { Text("Favori ($count)") },
+            label = { Text("${strings.favoritesLabel} ($count)", maxLines = 1) },
             leadingIcon = {
                 Icon(
                     imageVector = if (favoritesOnly) Icons.Rounded.Star else Icons.Rounded.StarOutline,
@@ -327,8 +343,34 @@ private fun MoviesFilterHeader(
             colors = FilterChipDefaults.filterChipColors(
                 selectedContainerColor = AmberGold.copy(alpha = 0.2f),
                 selectedLabelColor = AmberGold
-            )
+            ),
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp)
         )
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        if (maxWidth < 600.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                searchField(Modifier.fillMaxWidth())
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    sortBox()
+                    favChip()
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                searchField(Modifier.weight(1f))
+                sortBox()
+                favChip()
+            }
+        }
     }
 }
 
@@ -337,10 +379,12 @@ private fun MoviesPosterGrid(
     vods: List<VodEntity>,
     onOpenVod: (VodEntity) -> Unit
 ) {
+    val strings = LocalAppStrings.current
+
     if (vods.isEmpty()) {
         TvEmptyStateCard(
-            title = "Film Bulunamadı",
-            description = "Seçili kategori veya arama kriterine uygun film bulunmuyor.",
+            title = strings.noMovieFoundTitle,
+            description = strings.noMovieFoundDesc,
             icon = Icons.Rounded.Movie
         )
         return
@@ -375,6 +419,8 @@ private fun VodDetailDialog(
     onPlay: () -> Unit,
     onToggleFavorite: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -405,7 +451,7 @@ private fun VodDetailDialog(
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Kapat")
+                        Icon(Icons.Rounded.Close, contentDescription = strings.closeBtn)
                     }
                 }
 
@@ -456,7 +502,7 @@ private fun VodDetailDialog(
                                     color = ElectricCyan
                                 )
                                 Text(
-                                    text = "Film detayları yükleniyor...",
+                                    text = strings.loadingMovieDetails,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -482,7 +528,7 @@ private fun VodDetailDialog(
 
                         if (rating.isNotBlank() && (rating.toDoubleOrNull() ?: 0.0) > 0.0) {
                             Text(
-                                text = "IMDb / Puan: $rating",
+                                text = "IMDb: $rating",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = AmberGold
                             )
@@ -490,7 +536,7 @@ private fun VodDetailDialog(
 
                         val plot = info?.plot.orEmpty()
                         Text(
-                            text = plot.ifBlank { "Bu film için özet bilgisi panel tarafından sağlanmadı." },
+                            text = plot.ifBlank { strings.noPlotAvailable },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 6,
@@ -499,14 +545,14 @@ private fun VodDetailDialog(
 
                         if (!info?.director.isNullOrBlank()) {
                             Text(
-                                text = "Yönetmen: ${info?.director}",
+                                text = "${strings.directorLabel}: ${info?.director}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                         if (!info?.cast.isNullOrBlank()) {
                             Text(
-                                text = "Oyuncular: ${info?.cast}",
+                                text = "${strings.castLabel}: ${info?.cast}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
@@ -534,7 +580,7 @@ private fun VodDetailDialog(
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Filmi Oynat", fontWeight = FontWeight.Bold)
+                        Text(strings.playMovieBtn, fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(
@@ -552,7 +598,7 @@ private fun VodDetailDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (vod.isFavorite) "Favoride" else "Favoriye Ekle",
+                            text = if (vod.isFavorite) strings.inFavoritesBtn else strings.addToFavoritesBtn,
                             color = if (vod.isFavorite) AmberGold else Color.White
                         )
                     }

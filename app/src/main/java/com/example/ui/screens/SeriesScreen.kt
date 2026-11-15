@@ -6,16 +6,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,6 +72,7 @@ import com.example.ui.components.TvCategoryRowItem
 import com.example.ui.components.TvEmptyStateCard
 import com.example.ui.components.TvFocusableCard
 import com.example.ui.components.TvPosterCard
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.DeepObsidian
 import com.example.ui.theme.ElectricCyan
@@ -99,6 +102,8 @@ fun SeriesScreen(
     onOpenManager: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
+
     if (!hasActiveProfile) {
         Column(
             modifier = modifier
@@ -107,10 +112,10 @@ fun SeriesScreen(
             verticalArrangement = Arrangement.Center
         ) {
             TvEmptyStateCard(
-                title = "Diziler İçin Panel Gerekli",
-                description = "Sezon ve bölüm takibiyle dizileri izlemek için Yönetim sekmesinden Xtream panelinizi bağlayın.",
+                title = strings.seriesPanelRequiredTitle,
+                description = strings.seriesPanelRequiredDesc,
                 icon = Icons.Rounded.VideoLibrary,
-                actionLabel = "Panel Ekle",
+                actionLabel = strings.addPanelBtn,
                 onAction = onOpenManager
             )
         }
@@ -139,7 +144,7 @@ fun SeriesScreen(
                             .padding(14.dp)
                     ) {
                         Text(
-                            text = "Dizi Kategorileri",
+                            text = strings.seriesCategoriesTitle,
                             style = MaterialTheme.typography.titleLarge
                         )
                         Spacer(modifier = Modifier.height(10.dp))
@@ -149,7 +154,7 @@ fun SeriesScreen(
                         ) {
                             item {
                                 TvCategoryRowItem(
-                                    name = "Tüm Diziler",
+                                    name = strings.allSeriesTitle,
                                     count = allSeries.size,
                                     isSelected = selectedCategoryId == null,
                                     onClick = { onSelectCategory(null) }
@@ -204,7 +209,7 @@ fun SeriesScreen(
                         FilterChip(
                             selected = selectedCategoryId == null,
                             onClick = { onSelectCategory(null) },
-                            label = { Text("Tümü (${allSeries.size})") }
+                            label = { Text("${strings.allSeriesTitle} (${allSeries.size})") }
                         )
                     }
                     items(categories, key = { it.id }) { cat ->
@@ -236,6 +241,7 @@ fun SeriesScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SeriesSearchHeader(
     searchQuery: String,
@@ -244,20 +250,18 @@ private fun SeriesSearchHeader(
     onSearchChange: (String) -> Unit,
     onToggleFavoritesOnly: () -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    val strings = LocalAppStrings.current
+
+    val searchField: @Composable (Modifier) -> Unit = { fieldModifier ->
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
-            placeholder = { Text("Dizi ara...") },
+            placeholder = { Text(strings.searchSeriesHint, maxLines = 1) },
             leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
                     IconButton(onClick = { onSearchChange("") }) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Temizle")
+                        Icon(Icons.Rounded.Close, contentDescription = strings.closeBtn)
                     }
                 }
             },
@@ -269,15 +273,15 @@ private fun SeriesSearchHeader(
                 focusedBorderColor = ElectricCyan,
                 unfocusedBorderColor = GlassBorder
             ),
-            modifier = Modifier
-                .weight(1f)
-                .testTag("series_search_input")
+            modifier = fieldModifier.testTag("series_search_input")
         )
+    }
 
+    val favChip: @Composable () -> Unit = {
         FilterChip(
             selected = favoritesOnly,
             onClick = onToggleFavoritesOnly,
-            label = { Text("Favoriler ($count)") },
+            label = { Text("${strings.favoritesLabel} ($count)", maxLines = 1) },
             leadingIcon = {
                 Icon(
                     imageVector = if (favoritesOnly) Icons.Rounded.Star else Icons.Rounded.StarOutline,
@@ -288,8 +292,32 @@ private fun SeriesSearchHeader(
             colors = FilterChipDefaults.filterChipColors(
                 selectedContainerColor = AmberGold.copy(alpha = 0.2f),
                 selectedLabelColor = AmberGold
-            )
+            ),
+            modifier = Modifier.defaultMinSize(minHeight = 48.dp)
         )
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        if (maxWidth < 600.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                searchField(Modifier.fillMaxWidth())
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    favChip()
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                searchField(Modifier.weight(1f))
+                favChip()
+            }
+        }
     }
 }
 
@@ -298,10 +326,12 @@ private fun SeriesPosterGrid(
     series: List<SeriesEntity>,
     onOpenSeries: (SeriesEntity) -> Unit
 ) {
+    val strings = LocalAppStrings.current
+
     if (series.isEmpty()) {
         TvEmptyStateCard(
-            title = "Dizi Bulunamadı",
-            description = "Seçili kategori veya arama kriterine uygun dizi yok.",
+            title = strings.noSeriesFoundTitle,
+            description = strings.noSeriesFoundDesc,
             icon = Icons.Rounded.VideoLibrary
         )
         return
@@ -319,7 +349,7 @@ private fun SeriesPosterGrid(
                 title = item.name,
                 posterUrl = item.cover,
                 rating = item.rating,
-                badge = "DİZİ",
+                badge = strings.seriesBadge,
                 isFavorite = item.isFavorite,
                 fallbackIcon = Icons.Rounded.LiveTv,
                 onClick = { onOpenSeries(item) }
@@ -337,6 +367,7 @@ private fun SeriesDetailDialog(
     onToggleFavorite: () -> Unit,
     onPlayEpisode: (XtreamEpisode) -> Unit
 ) {
+    val strings = LocalAppStrings.current
     val seasons = detail?.seasons.orEmpty()
     val seasonNumbers = remember(seasons) { seasons.keys.toList().sorted() }
     var selectedSeason by remember(seasonNumbers) {
@@ -388,13 +419,13 @@ private fun SeriesDetailDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            if (series.isFavorite) "Favoride" else "Favori",
+                            if (series.isFavorite) strings.inFavoritesBtn else strings.favoriteShort,
                             color = if (series.isFavorite) AmberGold else Color.White
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Kapat")
+                        Icon(Icons.Rounded.Close, contentDescription = strings.closeBtn)
                     }
                 }
 
@@ -439,7 +470,7 @@ private fun SeriesDetailDialog(
                         }
                         val plot = detail?.plot?.ifBlank { series.plot } ?: series.plot
                         Text(
-                            text = plot.ifBlank { "Bu dizi için açıklama bilgisi bulunmuyor." },
+                            text = plot.ifBlank { strings.noSeriesDescAvailable },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 4,
@@ -460,12 +491,12 @@ private fun SeriesDetailDialog(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(color = ElectricCyan)
                             Spacer(modifier = Modifier.height(10.dp))
-                            Text("Sezonlar ve bölümler yükleniyor...")
+                            Text(strings.loadingSeasons)
                         }
                     }
                 } else if (seasonNumbers.isEmpty()) {
                     Text(
-                        text = "Bu dizi için bölüm listesi alınamadı.",
+                        text = strings.noEpisodesAvailable,
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -475,7 +506,7 @@ private fun SeriesDetailDialog(
                             FilterChip(
                                 selected = selectedSeason == seasonNum,
                                 onClick = { selectedSeason = seasonNum },
-                                label = { Text("$seasonNum. Sezon") },
+                                label = { Text("${strings.seasonSuffix} $seasonNum") },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = ElectricCyan,
                                     selectedLabelColor = DeepObsidian
@@ -507,7 +538,7 @@ private fun SeriesDetailDialog(
                                         color = MaterialTheme.colorScheme.primaryContainer
                                     ) {
                                         Text(
-                                            text = "B${ep.episodeNum}",
+                                            text = "E${ep.episodeNum}",
                                             style = MaterialTheme.typography.labelLarge,
                                             color = ElectricCyan,
                                             fontWeight = FontWeight.Bold,
@@ -524,7 +555,7 @@ private fun SeriesDetailDialog(
                                         )
                                         if (ep.duration.isNotBlank()) {
                                             Text(
-                                                text = "Süre: ${ep.duration}",
+                                                text = "${strings.durationPrefix}: ${ep.duration}",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -532,7 +563,7 @@ private fun SeriesDetailDialog(
                                     }
                                     Icon(
                                         imageVector = Icons.Rounded.PlayArrow,
-                                        contentDescription = "Bölümü Oynat",
+                                        contentDescription = strings.playMovieBtn,
                                         tint = ElectricCyan
                                     )
                                 }
